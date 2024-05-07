@@ -14,11 +14,12 @@
 todo
 */
 
+
 use lazy_static::lazy_static;
 use nu_ansi_term::Color::{Fixed, Rgb};
 use nu_ansi_term::*;
-use nu_plugin::{serve_plugin, EvaluatedCall, LabeledError, MsgPackSerializer, Plugin};
-use nu_protocol::{PluginSignature, SyntaxShape, Type, Value as NuValue};
+use nu_plugin::{serve_plugin, EvaluatedCall, MsgPackSerializer, Plugin, SimplePluginCommand, PluginCommand, EngineInterface};
+use nu_protocol::{LabeledError, Signature, SyntaxShape, Type, Value as NuValue};
 use regex::Regex;
 use serde::Deserialize;
 use std::env;
@@ -29,19 +30,23 @@ use toml::{Table as TomlTable, Value as TomlValue};
 const LOCALE_LANG: &str = "LANG";
 
 struct Translate;
-
+struct NuTonguesPlugin;
 impl Translate {
     fn new() -> Self {
         Self
     }
 }
 
-impl Plugin for Translate {
-    fn signature(&self) -> Vec<PluginSignature> {
-        vec![PluginSignature::build("translate")
-            .usage(
-                "takes in the path to the dir of translation files and a msg_key as a string param",
-            )
+impl SimplePluginCommand for Translate {
+    type Plugin = NuTonguesPlugin;
+    fn name(&self) -> &str {
+        "translate"
+    }
+    fn usage(&self) -> &str {
+        "takes in a path to the dir of the translation files via the pipeline and a msg_key as a string param that corresponds to the desired message to display."
+    }
+    fn signature(&self) -> Signature {
+        Signature::build(PluginCommand::name(self))
             .input_output_type(Type::String, Type::String)
             .required(
                 "msg_key",
@@ -52,39 +57,38 @@ impl Plugin for Translate {
                 "arguments",
                 SyntaxShape::Record(Vec::<(String, SyntaxShape)>::new()),
                 "The arguments for the translated string.",
-            )]
+            )
     }
 
-    fn run(
-        &mut self,
-        name: &str,
-        call: &EvaluatedCall,
-        input: &NuValue,
+    fn run (
+        &self,
+        _plugin:    &NuTonguesPlugin,
+        _engine:    &EngineInterface,
+        call:       &EvaluatedCall,
+        input:      &NuValue,
     ) -> Result<NuValue, LabeledError> {
-        //the call command must be "translate"
-        assert_eq!(name, "translate");
         //gets the environmental variable $LANG and unwraps it
         let mut posix_lang_string: String = env::var(LOCALE_LANG).expect("no $LANG variable");
         let mut path = input
-            .as_string()
-            .expect("input of translate was not String");
+            .as_str()
+            .expect("input of translate was not String").to_string();
         //fixes path if its messed up
         if !path.ends_with("/") {
             path += "/";
         }
         //call.nth(0) returns the 1st positional parameter of translate command.
-        //as per the .required function in signature, it is guaranteed to exist and be a String
+        //as per the .required() function in signature(), it is guaranteed to exist and be a String
         //Then pass it to the MessageKey object constructor
         let msg_key: MessageKey = MessageKey::new(
             call.nth(0)
-                .expect("postitional param 0 of translate does not exist")
-                .as_string()
-                .expect("positional param 0 of translate was not a string"),
+                .expect("postitional param 0 of translate does not exist") //this should be impossible because of .required()
+                .as_str()
+                .expect("positional param 0 of translate was not a string").to_string(), //this should also be impossible because SyntaxShape::String of .required()
         );
 
         //the inverse break condition
         let mut fallback: bool = false;
-        let mut result: String = loop {
+        let mut translated_result: String = loop {
             fallback = false;
             let posix_lang: PosixLanguage = PosixLanguage::new(posix_lang_string.clone())
                 .expect("$LANG or toml's fallback was not in POSIX format");
@@ -128,24 +132,33 @@ impl Plugin for Translate {
                 .iter()
             {
                 let parens = &("($".to_string() + &arg + ")").to_owned();
-                result = result.replace(parens, val.as_string().expect("one of the values in the position arg 1 record was not convertable to string").as_str());
+                translated_result = translated_result.replace(parens, val.as_str().expect("one of the values in the position arg 1 record was not convertable to string"));
             }
         }
         // For some reason the toml serde crate puts quotes on the ends of every string
-        result = result
+        translated_result = translated_result
             .trim_start_matches('"')
             .trim_end_matches('"')
             .to_string();
         //goes through and puts ANSI codes in the string
-        let ansi_result = ansify_string(&result);
+        let ansi_result = ansify_string(&translated_result);
 
         Ok(NuValue::string(ansi_result, input.span()))
+    
+    }
+}
+impl Plugin for NuTonguesPlugin {
+    fn commands(&self) -> Vec<Box<dyn PluginCommand<Plugin = Self>>> {
+        vec![
+            Box::new(Translate),
+        ]
     }
 }
 
+
 #[derive(Deserialize)]
 #[allow(dead_code)]
-struct LanguageToml {
+pub struct LanguageToml {
     language: String,
     territory: String,
     modifier: String,
@@ -153,16 +166,11 @@ struct LanguageToml {
     messages: TomlTable,
 }
 
-struct PosixLanguage {
+pub struct PosixLanguage {
     language: String,
     territory: String,
     encoding: String,
     modifier: String,
-}
-
-lazy_static! {
-    pub static ref POSIX_LANG_CONSTRUCTION_REGEX: Regex = Regex::new( r"(?<language>[a-zA-Z]*)(?<territory>_..)?(?<encoding>\.(.*))?(?<modifier>\@([a-zA-Z0-9]*))?").unwrap();
-    pub static ref MESSAGE_KEY_CONSTRUCTION_REGEX: Regex = Regex::new( r"(\.)" ).unwrap();
 }
 
 impl PosixLanguage {
@@ -276,7 +284,119 @@ impl Display for PosixLanguage {
         )
     }
 }
+/*impl Plugin for Translate {
+    fn signature(&self) -> Vec<PluginSignature> {
+        vec![PluginSignature::build("translate")
+            .usage(
+                "takes in the path to the dir of translation files and a msg_key as a string param",
+            )
+            .input_output_type(Type::String, Type::String)
+            .required(
+                "msg_key",
+                SyntaxShape::String,
+                "The name of the message in the translation files.",
+            )
+            .optional(
+                "arguments",
+                SyntaxShape::Record(Vec::<(String, SyntaxShape)>::new()),
+                "The arguments for the translated string.",
+            )]
+    }
 
+    fn run(
+        &mut self,
+        name: &str,
+        call: &EvaluatedCall,
+        input: &NuValue,
+    ) -> Result<NuValue, LabeledError> {
+        //the call command must be "translate"
+        assert_eq!(name, "translate");
+        //gets the environmental variable $LANG and unwraps it
+        let mut posix_lang_string: String = env::var(LOCALE_LANG).expect("no $LANG variable");
+        let mut path = input
+            .as_string()
+            .expect("input of translate was not String");
+        //fixes path if its messed up
+        if !path.ends_with("/") {
+            path += "/";
+        }
+        //call.nth(0) returns the 1st positional parameter of translate command.
+        //as per the .required function in signature, it is guaranteed to exist and be a String
+        //Then pass it to the MessageKey object constructor
+        let msg_key: MessageKey = MessageKey::new(
+            call.nth(0)
+                .expect("postitional param 0 of translate does not exist")
+                .as_string()
+                .expect("positional param 0 of translate was not a string"),
+        );
+
+        //the inverse break condition
+        let mut fallback: bool = false;
+        let mut result: String = loop {
+            fallback = false;
+            let posix_lang: PosixLanguage = PosixLanguage::new(posix_lang_string.clone())
+                .expect("$LANG or toml's fallback was not in POSIX format");
+
+            //takes in the dir input and searches all files in it for best translation file matching the user
+            //reads it to String
+            let best_file_path: String = posix_lang.get_best_file_path(path.clone());
+
+            let language_file_string: String = read_to_string(&best_file_path)
+                .expect(format!("failed to open file at path {}", &best_file_path).as_str());
+            //generates the translation from that file, reading the whole file
+            //optimiztion here possibly
+            let language_toml: LanguageToml =
+                toml::from_str(language_file_string.as_str()).unwrap();
+
+            //this TomlValue type allows the data to be treated as a table and a string simaltaneously
+            let mut toml_value: TomlValue = toml::Value::Table(language_toml.messages);
+            //loops through the path to get toml_value down to a String
+            for key in msg_key.get_path().iter() {
+                toml_value = if let Some(thing) = toml_value.get(key) {
+                    thing.to_owned()
+                } else {
+                    //if translation file is incomplete, sets up loop for fallback
+                    fallback = true;
+                    posix_lang_string = language_toml.fallback;
+                    break;
+                }
+            }
+            if !fallback {
+                break toml_value.to_string();
+            }
+        };
+
+        //variable processing in our string
+        let option = call.nth(1);
+        if option.is_some() {
+            let positionals = option.unwrap();
+            for (arg, val) in positionals
+                .as_record()
+                .expect("positional args index 1 was not a record")
+                .iter()
+            {
+                let parens = &("($".to_string() + &arg + ")").to_owned();
+                result = result.replace(parens, val.as_string().expect("one of the values in the position arg 1 record was not convertable to string").as_str());
+            }
+        }
+        // For some reason the toml serde crate puts quotes on the ends of every string
+        result = result
+            .trim_start_matches('"')
+            .trim_end_matches('"')
+            .to_string();
+        //goes through and puts ANSI codes in the string
+        let ansi_result = ansify_string(&result);
+
+        Ok(NuValue::string(ansi_result, input.span()))
+    }
+}*/
+
+
+
+lazy_static! {
+    pub static ref POSIX_LANG_CONSTRUCTION_REGEX: Regex = Regex::new( r"(?<language>[a-zA-Z]*)(?<territory>_..)?(?<encoding>\.(.*))?(?<modifier>\@([a-zA-Z0-9]*))?").unwrap();
+    pub static ref MESSAGE_KEY_CONSTRUCTION_REGEX: Regex = Regex::new( r"(\.)" ).unwrap();
+}
 struct MessageKey {
     path: Vec<String>,
 }
@@ -405,7 +525,10 @@ fn ansi_compute_and_add_color(command: &str, style: &Style) -> Style {
     result
 }
 
-fn ansi_color_from_str(string: &str) -> Option<Color> {
+
+
+
+pub fn ansi_color_from_str(string: &str) -> Option<Color> {
     match string.trim().to_lowercase().as_str() {
         "black" => Some(Color::Black),
         "blue" => Some(Color::Blue),
@@ -429,6 +552,9 @@ fn ansi_color_from_str(string: &str) -> Option<Color> {
         _ => None,
     }
 }
+
+
+
 /*
 fn nuvalue_to_string(nuvalue: $NuValue) -> Option<String> {
     match nuvalue  {
@@ -438,5 +564,5 @@ fn nuvalue_to_string(nuvalue: $NuValue) -> Option<String> {
 */
 
 fn main() {
-    serve_plugin(&mut Translate::new(), MsgPackSerializer);
+    serve_plugin(/*&mut Translate::new()*/ &NuTonguesPlugin, MsgPackSerializer);
 }
