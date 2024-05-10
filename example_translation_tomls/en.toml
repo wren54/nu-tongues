@@ -12,7 +12,7 @@ what_language = "This system speaks Global English."
 parrot = "($phrase), Squak!"
 
 # Sends a red message
-red = "(ansi color[red])This should be red."
+red = "(ansi color[red])This should be red.(ansi reset)"
 
 # Messages that communicate the weather
 [messages.weather]  # <---- message bundle (for organization purposes)
