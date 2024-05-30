@@ -1,7 +1,11 @@
-use lazy_static::lazy_static;
+
 use std::fmt::{Display, Formatter, Result as FormatResult};
 use std::fs::read_dir;
 use regex::Regex;
+use once_cell::sync::Lazy;
+
+
+static POSIX_LANG_CONSTRUCTION_REGEX: Lazy<Regex> = Lazy::new( || {Regex::new(r"(?<language>[a-zA-Z]*)(?<territory>_..)?(?<encoding>\.(.*))?(?<modifier>\@([a-zA-Z0-9]*))?").unwrap()} );
 
 pub struct PosixLanguage {
     language: String,
@@ -12,7 +16,7 @@ pub struct PosixLanguage {
 
 impl PosixLanguage {
     pub fn new(string: String) -> Option<Self> {
-        let captures = match POSIX_LANG_CONSTRUCTION_REGEX.captures(&string) {
+        let captures = match Lazy::<Regex>::force(&POSIX_LANG_CONSTRUCTION_REGEX).captures(&string) {
             Some(thing) => thing,
             None => return None,
         };
@@ -120,10 +124,4 @@ impl Display for PosixLanguage {
             self.get_modifier()
         )
     }
-}
-
-
-
-lazy_static! {
-    pub static ref POSIX_LANG_CONSTRUCTION_REGEX: Regex = Regex::new( r"(?<language>[a-zA-Z]*)(?<territory>_..)?(?<encoding>\.(.*))?(?<modifier>\@([a-zA-Z0-9]*))?").unwrap();
 }

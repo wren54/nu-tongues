@@ -1,11 +1,10 @@
-use lazy_static::lazy_static;
+
 use regex::Regex;
+use once_cell::sync::Lazy;
 use std::fmt::{Display, Formatter, Result as FormatResult};
 
 
-lazy_static! {
-    pub static ref MESSAGE_KEY_CONSTRUCTION_REGEX: Regex = Regex::new( r"(\.)" ).unwrap();
-}
+static MESSAGE_KEY_CONSTRUCTION_REGEX: Lazy<Regex> = Lazy::new( || {Regex::new(r"(\.)").unwrap()} );
 
 pub struct MessageKey {
     path: Vec<String>,
@@ -14,7 +13,7 @@ pub struct MessageKey {
 impl MessageKey {
     pub fn new(string: String) -> Self {
         let mut path: Vec<String> = Vec::new();
-        for s_t_r in MESSAGE_KEY_CONSTRUCTION_REGEX.split(&string) {
+        for s_t_r in Lazy::<Regex>::force(&MESSAGE_KEY_CONSTRUCTION_REGEX).split(&string) {
             path.push(s_t_r.to_string());
         }
         MessageKey { path: path }
